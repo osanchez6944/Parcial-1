@@ -1,68 +1,58 @@
 import streamlit as st
 import tensorflow as tf
-import numpy as np
 from PIL import Image
-import requests
-from io import BytesIO
+import numpy as np
+import gdown
+import os
 
-# Configuración de la página
-st.set_page_config(page_title="Clasificador de Flores por URL", layout="centered")
+# ID de tu archivo de Google Drive
+FILE_ID = '1UNik99esZBTe3O0ofsnh7BPq2zQaQAFL'
+MODEL_PATH = 'modelo_flores_v2.h5'
 
-st.title("🌸 Sistema de Catalogación Botánica")
-st.markdown("Pegue el **enlace directo** de la imagen de una flor para identificarla.")
-
-# 1. Cargar el modelo entrenado
 @st.cache_resource
-def load_my_model():
-    # Asegúrate de que el archivo .h5 esté en la misma carpeta que este script
-    return tf.keras.models.load_model('modelo_flores_v2.h5')
+def load_model_from_drive():
+    # Si el modelo no está en el servidor de Streamlit, lo descarga de Drive
+    if not os.path.exists(MODEL_PATH):
+        with st.spinner('Descargando modelo desde Google Drive... Esto solo ocurre la primera vez.'):
+            url = f'https://drive.google.com/uc?id={FILE_ID}'
+            gdown.download(url, MODEL_PATH, quiet=False)
+    
+    return tf.keras.models.load_model(MODEL_PATH)
 
-model = load_my_model()
-class_names = ['daisy', 'dandelion', 'roses', 'sunflowers', 'tulips']
+st.set_page_config(page_title="Clasificador de Flores", page_icon="🌸")
+st.title("🌸 Clasificador de Flores")
+st.write("Sube una foto de una flor (Rosa, Girasol, Tulipán, Margarita o Diente de León) para identificarla.")
 
-# 2. Catálogo de especies
-with st.expander("Ver catálogo de especies detectables"):
-    st.write(", ".join([name.capitalize() for name in class_names]))
+try:
+    # Carga del modelo
+    model = load_model_from_drive()
+    class_names = ['daisy', 'dandelion', 'roses', 'sunflowers', 'tulips']
 
-# 3. Módulo de entrada por URL
-url = st.text_input("URL de la imagen (JPG, PNG):", placeholder="https://ejemplo.com/foto-flor.jpg")
+    uploaded_file = st.file_uploader("Elige una imagen...", type=["jpg", "png", "jpeg"])
 
-if url:
-    try:
-        # Descargar la imagen desde la web
-        response = requests.get(url, timeout=10)
-        image = Image.open(BytesIO(response.content))
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file)
+        st.image(image, caption='Imagen subida', use_column_width=True)
         
-        # Mostrar la imagen cargada
-        st.image(image, caption='Imagen desde el enlace', use_container_width=True)
-        
-        # 4. Preprocesamiento (Ajustado a 180x180 como tu modelo original)
-        img = image.convert('RGB') # Asegura que tenga 3 canales
-        img = img.resize((180, 180))
+        # Preprocesamiento idéntico al entrenamiento
+        img = image.resize((180, 180))
         img_array = tf.keras.utils.img_to_array(img)
-        img_array = tf.expand_dims(img_array, 0) # Crear el batch (1, 180, 180, 3)
+        img_array = tf.expand_dims(img_array, 0) # Crear un batch
 
         # Predicción
-        with st.spinner('Analizando imagen...'):
-            predictions = model.predict(img_array)
-            score = tf.nn.softmax(predictions[0])
+        predictions = model.predict(img_array)
+        score = tf.nn.softmax(predictions[0])
         
-        # 5. Resaltado del resultado
         resultado = class_names[np.argmax(score)]
         confianza = 100 * np.max(score)
+
+        st.success(f"### Predicción: **{resultado.upper()}**")
+        st.info(f"### Confianza: **{confianza:.2f}%**")
         
-        st.success(f"### Predicción: {resultado.upper()} ({confianza:.2f}% de confianza)")
+        # Gráfico de probabilidades
+        st.write("#### Probabilidades por categoría:")
+        st.bar_chart(score.numpy())
 
-        # 6. Distribución de probabilidades
-        st.write("#### Confianza por categoría:")
-        for i, name in enumerate(class_names):
-            prob = float(score[i])
-            col1, col2 = st.columns([1, 4])
-            col1.text(name.capitalize())
-            col2.progress(prob)
-
-    except Exception as e:
-        st.error(f"Error: No se pudo cargar la imagen. Verifique que el link sea directo y público. (Detalle: {e})")
-
-else:
-    st.info("💡 Consejo: Copia el 'Vínculo de la imagen' (que termine en .jpg o .png) de Google Imágenes y pégalo arriba.")
+except Exception as e:
+    st.error(f"Error en la aplicación: {e}")
+    st.write("Asegúrate de que el archivo requirements.txt incluya 'gdown'.")
